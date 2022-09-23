@@ -6,43 +6,40 @@ import time
 import zlib
 import hashlib
 from auth import auth
+from http_bulk import http_bulk
+
+
+# The root directory to download into, depots will be stored by their OS and Version string:
+# download_dir/1.0.0/windows/manifest/
+# download_dir/1.0.0/windows/depots/
+# download_dir/1.0.0/windows/gog_depots/
+download_dir = '/zpool0/share/stellaris_backups_gog/'
+
+# GOG product IDs that should be downloaded (must be licensed on your account)
+allowed_product_ids = ['1508702879',]
 
 
 manifest_dir = 'build_manifests/'
-download_dir = '/zpool0/share/stellaris_backups_gog/'
 base_meta_url = 'https://gog-cdn-lumen.secure2.footprint.net/content-system/v2/meta/'
 prefix_secure_url = 'https://content-system.gog.com/products/' #product ID will be inserted here in the code
 suffix_secure_url = '/secure_link?generation=2&path=/&_version=2'
 
 
-allowed_product_ids = ['1508702879']
-
-
-#products.json -> build
-#{
-#  "branch": null,
-#  "date_published": "2022-06-27T07:09:57+00:00",
-#  "generation": 2,
-#  "id": 55566076607633620,
-#  "legacy_build_id": null,
-#  "link": "https://gog-cdn-lumen.secure2.footprint.net/content-system/v2/meta/0b/43/0b43fa92db60cfd868f5a078f2d94f23",
-#  "listed": true,
-#  "meta_id": "0b43fa92db60cfd868f5a078f2d94f23",
-#  "os": "osx",
-#  "product_id": 1508702879,
-#  "public": true,
-#  "tags": [
-#    "csb_10_6_1_l_158"
-#  ],
-#  "version": "3.4.5"
-#}
 
 
 s = requests.Session()
 a = auth()
+http_bulk = http_bulk(a)
 
-with open('product.json', 'r') as fh:
-    product = json.load(fh)
+if os.path.isfile('product.json'):
+    with open('product.json', 'r') as fh:
+        product = json.load(fh)
+else:
+    raise Exception('No product.json file, read README')
+
+if not os.path.isdir(manifest_dir):
+    raise Exception('No build_manifests dir, read README')
+
 
 builds_by_buildid = {}
 for build in product['builds']:
@@ -69,7 +66,7 @@ for this_file in dirs:
         depot_existing = 0
         depot_dl_success = 0
         depot_dl_fail = 0
-        for depot in manifest['depots'] + [manifest['offlineDepot']]: #Not sure why these are structured seperately, but I want all.
+        for depot in manifest['depots']:
             depot_count += 1
             if(os.path.isfile('%s/%s/%s/manifest/%s' % (download_dir, version, platform, depot['manifest']))):
                     #manifest already in cache, use that version
@@ -136,39 +133,12 @@ for this_file in dirs:
                     print('Unlicensed product - skipping %s' %file_path)
                     continue
 
-                fail = False
-                with open(file_path, 'wb') as item_fh:
-                    for chunk in item['chunks']:
-                        #download file chunks and put them together
-                        chunk_url = a.get_secure_link(depot['productId']) #not sure this is right...
-                        chunk_url += '/%s/%s/%s' % (chunk['compressedMd5'][0:2], chunk['compressedMd5'][2:4], chunk['compressedMd5'])
-                        try:
-                            resp = s.get(chunk_url)
-                        except Exception as e:
-                            print ('ERR exception while fetching chunk %s %s' % (type(e), e))
-                            fail = True
-                            break
+                item['productId'] = depot['productId']
+                item['file_path'] = file_path
 
-                        if(resp.status_code != 200):
-                            print('ERR non-200 status code on chunk %s %s' % (resp.status_code, resp.headers))
-                            fail = True
-                            break
+                http_bulk.queue_file(item)
 
-                        zlib_obj = zlib.decompressobj()
-                        md5sum = hashlib.md5(resp.content).hexdigest()
-                        if(md5sum != chunk['compressedMd5']):
-                            print('ERR Chunk compressedMd5 did not match expected: %s, seen: %s' % (chunk['compressedMd5'], md5sum))
-                            fail = True
-                            break
-
-                        item_fh.write(zlib_obj.decompress(resp.content))
-
-
-                if fail == True:
-                    os.remove(file_path)
-                    print('file write fail, %s' % (item['path']))
-                else:
-                    print('file write complete, %s\t%s' % (os.path.getsize(file_path), item['path']))
+            http_bulk.runner()
             #deal with small file refs
             
             #sfc = depot_manifest_json['smallFilesContainer']
@@ -211,61 +181,3 @@ for build in product['builds']:
     if str(build['id']) not in seen_build_ids:
         print ('ERR: Build ID in product but not manifests: %s' % (build['id'],))
 
-
-
-
-
-class auth:
-    def __init__(self):
-        self.current_token = {
-                'access_token': None,
-                'expires_in': None,
-                'token_type': None,
-                'scope': None,
-                'session_id': None,
-                'refresh_token': None,
-                'user_id': None,
-                }
-        self.secure_links = {}
-
-        self.token_acquire_timestamp = None
-        self.token_expire_allowance = 30 #seconds
-        self.secure_link_expire_allowance = 5 #seconds
-        self.session = requests.Session()
-
-    def get_current_token(self):
-        if(self.token_acquire_timestamp != None and time.time()-self.token_acquire_timestamp > self.current_token['expires_in']-self.token_expire_allowance):
-            return self.current_token['access_token']
-        else:
-            #todo: Acquire a token?
-            raise Exception('Missing a valid auth token (not set or expired)')
-
-    def setup_auth_header(self):
-        self.session.headers.update({'Authorization': 'Bearer %s' % (self.get_current_token(),)})
-
-
-    # get a secure link for a product_id from cache or request a new one, this should be used for 
-    def get_secure_link(self, product_id, index=0):
-        if product_id not in self.secure_links:
-            self.secure_links[product_id] = self.request_secure_link(product_id)
-        if self.secure_links[product_id]['urls'][index]['parameters']['expires_at'] > time.time()-self.secure_link_expire_allowance:
-            del self.secure_links[product_id] #clear it in case the next line throws an exception
-            self.secure_links[product_id] = self.request_secure_link(product_id)
-        
-        sl = self.secure_links[product_id]['urls'][index]
-        url = sl['url_format']
-        for key, parameter in parameters:
-            url.replace('{%s}' % (key,), parameter)
-
-        return url
-
-    def request_secure_link(self, product_id):
-        self.setup_auth_header()
-        url = '%s%s%s' % (prefix_secure_url, product_id, suffix_secure_url)
-        response = s.get(url)
-        if(response.status_code == 200):
-            return response.content
-        else:
-            raise Exception('Error while requesting secure link response code %s, body: %s' % (response.status_code, response.content))
-
-        
