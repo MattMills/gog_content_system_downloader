@@ -20,7 +20,8 @@ allowed_product_ids = ['1508702879',]
 
 
 manifest_dir = 'build_manifests/'
-base_meta_url = 'https://gog-cdn-lumen.secure2.footprint.net/content-system/v2/meta/'
+#base_meta_url = 'https://gog-cdn-lumen.secure2.footprint.net/content-system/v2/meta/'
+base_meta_url = 'https://cdn.gog.com/content-system/v2/meta/'
 prefix_secure_url = 'https://content-system.gog.com/products/' #product ID will be inserted here in the code
 suffix_secure_url = '/secure_link?generation=2&path=/&_version=2'
 
@@ -68,6 +69,9 @@ for this_file in dirs:
         depot_dl_fail = 0
         for depot in manifest['depots']:
             depot_count += 1
+            if(os.path.isfile('%s/%s/%s/manifest/%s.complete_flag' % (download_dir, version, platform, depot['manifest']))):
+                print('SKIPPING PREVIOUSLY COMPLETED MANIFEST: %s/%s/%s/manifest/%s' % (download_dir, version, platform, depot['manifest']))
+                continue
             if(os.path.isfile('%s/%s/%s/manifest/%s' % (download_dir, version, platform, depot['manifest']))):
                     #manifest already in cache, use that version
                     with open('%s/%s/%s/manifest/%s' % (download_dir, version, platform, depot['manifest']), 'r') as fh2:
@@ -130,7 +134,7 @@ for this_file in dirs:
                         #File size is correct, so skip file, we'll check hashes somewhere else since I left the hashes in one of these boxes.
                         continue
                 if depot['productId'] not in allowed_product_ids:
-                    print('Unlicensed product - skipping %s' %file_path)
+                    # print('Unlicensed product - skipping %s' %file_path)
                     continue
 
                 item['productId'] = depot['productId']
@@ -138,7 +142,9 @@ for this_file in dirs:
 
                 http_bulk.queue_file(item)
 
-            http_bulk.runner()
+            if http_bulk.queue_size() > 0:
+                http_bulk.runner()
+
             #deal with small file refs
             
             #sfc = depot_manifest_json['smallFilesContainer']
@@ -175,6 +181,10 @@ for this_file in dirs:
 
 
         print('%s\t%s\t%s\ttotal: %s existing: %s dl_success: %s dl_fail: %s' % (build_id, platform, version, depot_count, depot_existing, depot_dl_success, depot_dl_fail))
+        if depot_count == depot_existing and depot_dl_fail == 0:
+            with open('%s/%s/%s/manifest/%s.complete_flag' % (download_dir, version, platform, depot['manifest']), 'w') as fh3:
+                fh3.write('true')
+            
 
 
 for build in product['builds']:

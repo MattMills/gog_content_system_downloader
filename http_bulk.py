@@ -42,6 +42,8 @@ class http_bulk:
     def queue_file(self, file_meta):
         self.queue.append(file_meta)
 
+    def queue_size(self):
+        return len(self.queue)
 
     def download_file(self, file_meta):
         fail_file = False
@@ -55,7 +57,9 @@ class http_bulk:
                     if attempts > 0:
                         self.stats['chunk_retry'] += 1
                     try:
-                        resp = self.session.get(chunk_url)
+                        print("FETCH %s" % chunk_url)
+                        resp = self.session.get(chunk_url, timeout=2)
+                        print(resp)
                     except Exception as e:
                         print ('ERR exception while fetching chunk (attempt #%s) %s %s' % (attempts, type(e), e))
                         continue
@@ -87,6 +91,8 @@ class http_bulk:
             print('file write fail, %s' % (file_meta['path']))
             self.stats['fail_chunks'] += len(file_meta['chunks'])
         else:
-            print('file write complete, %s bytes\t%s' % (os.path.getsize(file_meta['file_path']), file_meta['path']))
-            self.stats['success_chunks'] += len(file_meta['success_chunks'])
+            bytes_string = '%s bytes' % (os.path.getsize(file_meta['file_path']), )
+            bytes_string = bytes_string.ljust(30)
+            print('file write complete, %s%s' % (bytes_string, file_meta['path']))
+            self.stats['success_chunks'] += len(file_meta['chunks'])
 
