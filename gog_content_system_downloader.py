@@ -51,6 +51,8 @@ seen_build_ids = []
 dirs = os.listdir(manifest_dir)
 for this_file in dirs:
     with open('%s/%s' % (manifest_dir, this_file), 'r') as fh:
+        if this_file[-4:] != 'json':
+            continue
         manifest = json.load(fh)
 
         build_id = manifest['buildId']
@@ -63,16 +65,19 @@ for this_file in dirs:
             print('%s\tExcept: %s - %s' % (build_id, type(e), e))
             continue
 
+        if(os.path.isfile('%s/%s.complete_flag' % (manifest_dir, this_file))):
+            print('SKIPPING PREVIOUSLY COMPLETED MANIFEST: %s/%s' % (manifest_dir, this_file))
+            continue
+        
         depot_count = 0
         depot_existing = 0
         depot_dl_success = 0
         depot_dl_fail = 0
         for depot in manifest['depots']:
             depot_count += 1
-            if(os.path.isfile('%s/%s/%s/manifest/%s.complete_flag' % (download_dir, version, platform, depot['manifest']))):
-                print('SKIPPING PREVIOUSLY COMPLETED MANIFEST: %s/%s/%s/manifest/%s' % (download_dir, version, platform, depot['manifest']))
-                continue
+    
             if(os.path.isfile('%s/%s/%s/manifest/%s' % (download_dir, version, platform, depot['manifest']))):
+                    print('Using cached manifest %s/%s/%s/manifest/%s' % (download_dir, version, platform, depot['manifest']))
                     #manifest already in cache, use that version
                     with open('%s/%s/%s/manifest/%s' % (download_dir, version, platform, depot['manifest']), 'r') as fh2:
                         depot_manifest_data = fh2.read()
@@ -181,8 +186,10 @@ for this_file in dirs:
 
 
         print('%s\t%s\t%s\ttotal: %s existing: %s dl_success: %s dl_fail: %s' % (build_id, platform, version, depot_count, depot_existing, depot_dl_success, depot_dl_fail))
+
+        #TODO: Is this logic right? doesn't feel right...
         if depot_count == depot_existing and depot_dl_fail == 0:
-            with open('%s/%s/%s/manifest/%s.complete_flag' % (download_dir, version, platform, depot['manifest']), 'w') as fh3:
+            with open('%s/%s.complete_flag' % (manifest_dir, this_file), 'w') as fh3:
                 fh3.write('true')
             
 
